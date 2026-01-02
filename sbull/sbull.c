@@ -83,13 +83,8 @@ struct sbull_dev
 	struct blk_mq_tag_set tag_set; /* tag_set added */
 	struct request_queue *queue;   /* The device request queue */
 
-<<<<<<< HEAD
 		struct gendisk *gd;             /* 通用磁盘结构，用于注册设备 */
         struct timer_list timer;        /* For simulated media changes */
-=======
-	补全
-	struct timer_list timer; /* For simulated media changes */
->>>>>>> zjd
 };
 
 static struct sbull_dev *Devices = NULL;
@@ -124,7 +119,6 @@ blk_generic_alloc_queue(int node_id)
 static void sbull_transfer(struct sbull_dev *dev, unsigned long sector,
 						   unsigned long nsect, char *buffer, int write)
 {
-<<<<<<< HEAD
 	unsigned long offset = sector * hardsect_size;	/* 计算扇区偏移量 */
 	unsigned long nbytes = nsect * hardsect_size;	/* 计算传输字节数 */
 
@@ -142,9 +136,6 @@ static void sbull_transfer(struct sbull_dev *dev, unsigned long sector,
 		/* 读操作: 从设备数据区复制到buffer */
 		memcpy(buffer, dev->data + offset, nbytes);
 	}
-=======
-	补全
->>>>>>> zjd
 }
 
 /*
