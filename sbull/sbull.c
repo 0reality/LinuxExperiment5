@@ -292,9 +292,17 @@ static int sbull_open(struct block_device *bdev, fmode_t mode)
 
 static void sbull_release(struct gendisk *disk, fmode_t mode)
 {
-	补全
-}
+	struct sbull_dev *dev = disk->private_data; /* 获取设备数据 */
 
+	spin_lock(&dev->lock); /* 加锁 */
+	dev->users--;		   /* 减少用户计数 */
+	if (dev->users == 0)
+	{ /* 如果没有用户了,重启定时器 */
+		dev->timer.expires = jiffies + INVALIDATE_DELAY;
+		add_timer(&dev->timer);
+	}
+	spin_unlock(&dev->lock); /* 解锁 */
+}
 /*
  * Look for a (simulated) media change.
  */
