@@ -1,103 +1,109 @@
 /*
  * Sample disk driver, from the beginning.
+ * Ê¾Àı´ÅÅÌÇı¶¯³ÌĞò,´ÓÍ·¿ªÊ¼ÊµÏÖ
  */
 
-#include <linux/version.h> /* LINUX_VERSION_CODE  */
-#include <linux/blk-mq.h>
+#include <linux/version.h> 	/* LINUX_VERSION_CODE  */
+#include <linux/blk-mq.h>	/* ¿éÉè±¸¶à¶ÓÁĞÖ§³Ö */	
 /* https://olegkutkov.me/2020/02/10/linux-block-device-driver/
-   https://prog.world/linux-kernel-5-0-we-write-simple-block-device-under-blk-mq/
+   https://prog.world/linux-kernel-5-0-we-write-simple-block-device-under-blk-mq/           
    blk-mq and kernels >= 5.0
 */
+
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 
 #include <linux/sched.h>
-#include <linux/kernel.h>	   /* printk()ï¼šå†…æ ¸æ‰“å° */
-#include <linux/slab.h>		   /* kmalloc()ï¼šå†…æ ¸å†…å­˜åˆ†é… */
-#include <linux/fs.h>		   /* æ–‡ä»¶ç³»ç»Ÿç›¸å…³æ“ä½œ */
-#include <linux/errno.h>	   /* é”™è¯¯ç å®šä¹‰ */
-#include <linux/timer.h>	   /* å†…æ ¸å®šæ—¶å™¨ */
-#include <linux/types.h>	   /* ç±»å‹å®šä¹‰ï¼ˆsize_tç­‰ï¼‰ */
-#include <linux/fcntl.h>	   /* æ–‡ä»¶æ‰“å¼€æ¨¡å¼ï¼ˆO_ACCMODEç­‰ï¼‰ */
-#include <linux/hdreg.h>	   /* HDIO_GETGEOï¼šè·å–ç£ç›˜å‡ ä½•ä¿¡æ¯ */
-#include <linux/kdev_t.h>	   /* è®¾å¤‡å·æ“ä½œ */
-#include <linux/vmalloc.h>	   /* vmalloc()ï¼šè™šæ‹Ÿå†…å­˜åˆ†é…ï¼ˆå¤§å†…å­˜ï¼‰ */
-#include <linux/genhd.h>	   /* gendiskï¼šé€šç”¨ç£ç›˜ç»“æ„ */
-#include <linux/blkdev.h>	   /* å—è®¾å¤‡æ ¸å¿ƒæ¥å£ */
-#include <linux/buffer_head.h> /* invalidate_bdevï¼š invalidateç¼“å†²åŒº */
-#include <linux/bio.h>		   /* bioï¼šå—I/Oæ“ä½œç»“æ„ */
+#include <linux/kernel.h>	/* printk() */
+#include <linux/slab.h>		/* kmalloc() */
+#include <linux/fs.h>		/* everything... */
+#include <linux/errno.h>	/* error codes */
+#include <linux/timer.h>
+#include <linux/types.h>	/* size_t */
+#include <linux/fcntl.h>	/* O_ACCMODE */
+#include <linux/hdreg.h>	/* HDIO_GETGEO */
+#include <linux/kdev_t.h>
+#include <linux/vmalloc.h>
+#include <linux/genhd.h>
+#include <linux/blkdev.h>
+#include <linux/buffer_head.h>	/* invalidate_bdev */
+#include <linux/bio.h>
 
-MODULE_LICENSE("Dual BSD/GPL"); /* æ¨¡å—è®¸å¯è¯ï¼šåŒBSD/GPL */
+MODULE_LICENSE("Dual BSD/GPL");
 
-static int sbull_major = 0;			 /* ä¸»è®¾å¤‡å·ï¼ˆé»˜è®¤åŠ¨æ€åˆ†é…ï¼‰ */
-module_param(sbull_major, int, 0);	 /* æ¨¡å—å‚æ•°ï¼šå…è®¸ç”¨æˆ·æŒ‡å®šä¸»è®¾å¤‡å· */
-static int hardsect_size = 512;		 /* ç¡¬ä»¶æ‰‡åŒºå¤§å°ï¼ˆå­—èŠ‚ï¼‰ */
-module_param(hardsect_size, int, 0); /* æ¨¡å—å‚æ•°ï¼šç¡¬ä»¶æ‰‡åŒºå¤§å° */
-static int nsectors = 1024;			 /* ç£ç›˜æ‰‡åŒºæ€»æ•°ï¼ˆæ¨¡æ‹Ÿç£ç›˜å¤§å°ï¼‰ */
-module_param(nsectors, int, 0);		 /* æ¨¡å—å‚æ•°ï¼šæ‰‡åŒºæ•°é‡ */
-static int ndevices = 4;			 /* è®¾å¤‡æ•°é‡ */
-module_param(ndevices, int, 0);		 /* æ¨¡å—å‚æ•°ï¼šè®¾å¤‡æ•°é‡ */
+/* Ä£¿é²ÎÊı: Ö÷Éè±¸ºÅ,0±íÊ¾¶¯Ì¬·ÖÅä */
+static int sbull_major = 0;
+module_param(sbull_major, int, 0);
+static int hardsect_size = 512;	/* Ó²¼şÉÈÇø´óĞ¡ */
+module_param(hardsect_size, int, 0);
+static int nsectors = 1024;	/* How big the drive is Éè±¸ÉÈÇøÊıÁ¿ */
+module_param(nsectors, int, 0);
+static int ndevices = 4;	/* Éè±¸ÊıÁ¿ */
+module_param(ndevices, int, 0);
 
 /*
- * è¯·æ±‚å¤„ç†æ¨¡å¼
+ * The different "request modes" we can use.
+ * ÎÒÃÇ¿ÉÒÔÊ¹ÓÃµÄ²»Í¬"ÇëÇóÄ£Ê½"
  */
-enum
-{
-	RM_SIMPLE = 0,	/* ç®€å•è¯·æ±‚å¤„ç† */
-	RM_FULL = 1,	/* å®Œæ•´è¯·æ±‚å¤„ç†ï¼ˆæ”¯æŒè¯·æ±‚åˆå¹¶ï¼‰ */
-	RM_NOQUEUE = 2, /* ä½¿ç”¨è‡ªå®šä¹‰make_requestå‡½æ•° */
+enum {
+	RM_SIMPLE  = 0,	/* The extra-simple request function ¼òµ¥ÇëÇó´¦Àí */
+	RM_FULL    = 1,	/* The full-blown version ÍêÕûÇëÇó´¦Àí */
+	RM_NOQUEUE = 2,	/* Use make_request Ö±½ÓÊ¹ÓÃmake_request */
 };
-static int request_mode = RM_SIMPLE; /* é»˜è®¤ç®€å•è¯·æ±‚æ¨¡å¼ */
-module_param(request_mode, int, 0);	 /* æ¨¡å—å‚æ•°ï¼šè¯·æ±‚æ¨¡å¼ */
+static int request_mode = RM_SIMPLE;	/* Ä¬ÈÏÊ¹ÓÃ¼òµ¥Ä£Ê½ */
+module_param(request_mode, int, 0);
 
 /*
  * Minor number and partition management.
+ * ´ÎÉè±¸ºÅºÍ·ÖÇø¹ÜÀí
  */
-#define SBULL_MINORS 16
-#define MINOR_SHIFT 4
-#define DEVNUM(kdevnum)	(MINOR(kdev_t_to_nr(kdevnum)) >> MINOR_SHIFT
+#define SBULL_MINORS	16	/* Ã¿¸öÉè±¸Ö§³ÖµÄ·ÖÇøÊı */
+#define MINOR_SHIFT	4	/* ´ÎÉè±¸ºÅÒÆÎ»Êı(2^4=16) */
+#define DEVNUM(kdevnum)	(MINOR(kdev_t_to_nr(kdevnum)) >> MINOR_SHIFT)	/* ´Ó´ÎÉè±¸ºÅ»ñÈ¡Éè±¸ºÅ */
 
 /*
  * We can tweak our hardware sector size, but the kernel talks to us
  * in terms of small sectors, always.
+ * ÎÒÃÇ¿ÉÒÔµ÷ÕûÓ²¼şÉÈÇø´óĞ¡,µ«ÄÚºË×ÜÊÇÒÔĞ¡ÉÈÇøÎªµ¥Î»ÓëÎÒÃÇÍ¨ĞÅ
  */
-#define KERNEL_SECTOR_SIZE 512
+#define KERNEL_SECTOR_SIZE	512	/* ÄÚºËÉÈÇø´óĞ¡ */
 
 /*
  * After this much idle time, the driver will simulate a media change.
+ * Éè±¸¿ÕÏĞÕâÃ´³¤Ê±¼äºó,Çı¶¯³ÌĞò½«Ä£Äâ½éÖÊ¸ü»»
  */
-#define INVALIDATE_DELAY 30 * HZ
+#define INVALIDATE_DELAY	30*HZ	/* 30ÃëºóÄ£Äâ½éÖÊ¸ü»» */
 
 /*
  * The internal representation of our device.
+ * Éè±¸µÄÄÚ²¿±íÊ¾½á¹¹
  */
-struct sbull_dev
-{
-	int size;					   /* Device size in sectors */
-	u8 *data;					   /* The data array */
-	short users;				   /* How many users */
-	short media_change;			   /* Flag a media change? */
-	spinlock_t lock;			   /* For mutual exclusion */
-	struct blk_mq_tag_set tag_set; /* tag_set added */
-	struct request_queue *queue;   /* The device request queue */
-
-		struct gendisk *gd;             /* é€šç”¨ç£ç›˜ç»“æ„ï¼Œç”¨äºæ³¨å†Œè®¾å¤‡ */
-        struct timer_list timer;        /* For simulated media changes */
+struct sbull_dev {
+        int size;                       /* Device size in sectors Éè±¸´óĞ¡(ÉÈÇø) */
+        u8 *data;                       /* The data array ´æ´¢Êı¾İµÄÊı×é */
+        short users;                    /* How many users ÓÃ»§¼ÆÊı */
+        short media_change;             /* Flag a media change? ½éÖÊ¸ü»»±êÖ¾ */
+        spinlock_t lock;                /* For mutual exclusion ×ÔĞıËø,ÓÃÓÚ»¥³â */
+	struct blk_mq_tag_set tag_set;	/* tag_set added ¿éÉè±¸¶à¶ÓÁĞ±êÇ©¼¯ */
+        struct request_queue *queue;    /* The device request queue Éè±¸ÇëÇó¶ÓÁĞ */
+        struct gendisk *gd;             /* Í¨ÓÃ´ÅÅÌ½á¹¹£¬ÓÃÓÚ×¢²áÉè±¸ */
+        struct timer_list timer;        /* For simulated media changes Ä£Äâ½éÖÊ¸ü»»µÄ¶¨Ê±Æ÷ */
 };
 
-static struct sbull_dev *Devices = NULL;
+static struct sbull_dev *Devices = NULL;	/* Éè±¸Êı×éÖ¸Õë */
 
 /**
- * See https://github.com/openzfs/zfs/pull/10187/
- */
+* See https://github.com/openzfs/zfs/pull/10187/
+* ¸ù¾İÄÚºË°æ±¾²îÒìÊµÏÖ¼æÈİµÄÇëÇó¶ÓÁĞ·ÖÅäº¯Êı
+*/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
 static inline struct request_queue *
-blk_generic_alloc_queue(make_request_fn make_request, int node_id)
+blk_generic_alloc_queue(make_request_fn make_request, int node_id)	/* 5.9ÒÔÏÂ°æ±¾ */
 #else
 static inline struct request_queue *
-blk_generic_alloc_queue(int node_id)
+blk_generic_alloc_queue(int node_id)	/* 5.9¼°ÒÔÉÏ°æ±¾ */
 #endif
 {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0))
@@ -115,232 +121,244 @@ blk_generic_alloc_queue(int node_id)
 
 /*
  * Handle an I/O request.
+ * ´¦ÀíI/OÇëÇó,Ö´ĞĞÊµ¼ÊµÄÊı¾İ´«Êä
  */
 static void sbull_transfer(struct sbull_dev *dev, unsigned long sector,
-						   unsigned long nsect, char *buffer, int write)
+		unsigned long nsect, char *buffer, int write)
 {
-	unsigned long offset = sector * hardsect_size;	/* è®¡ç®—æ‰‡åŒºåç§»é‡ */
-	unsigned long nbytes = nsect * hardsect_size;	/* è®¡ç®—ä¼ è¾“å­—èŠ‚æ•° */
+	unsigned long offset = sector * hardsect_size;	/* ¼ÆËãÉÈÇøÆ«ÒÆÁ¿ */
+	unsigned long nbytes = nsect * hardsect_size;	/* ¼ÆËã´«Êä×Ö½ÚÊı */
 
-	/* æ£€æŸ¥æ˜¯å¦è¶…å‡ºè®¾å¤‡èŒƒå›´ */
+	/* ¼ì²éÊÇ·ñ³¬³öÉè±¸·¶Î§ */
 	if ((offset + nbytes) > dev->size) {
 		printk(KERN_NOTICE "sbull: Beyond-end write (%ld %ld)\n", offset, nbytes);
 		return;
 	}
 
-	/* æ ¹æ®è¯»å†™æ ‡å¿—æ‰§è¡Œæ•°æ®ä¼ è¾“ */
+	/* ¸ù¾İ¶ÁĞ´±êÖ¾Ö´ĞĞÊı¾İ´«Êä */
 	if (write) {
-		/* å†™æ“ä½œ: ä»bufferå¤åˆ¶åˆ°è®¾å¤‡æ•°æ®åŒº */
+		/* Ğ´²Ù×÷: ´Óbuffer¸´ÖÆµ½Éè±¸Êı¾İÇø */
 		memcpy(dev->data + offset, buffer, nbytes);
 	} else {
-		/* è¯»æ“ä½œ: ä»è®¾å¤‡æ•°æ®åŒºå¤åˆ¶åˆ°buffer */
+		/* ¶Á²Ù×÷: ´ÓÉè±¸Êı¾İÇø¸´ÖÆµ½buffer */
 		memcpy(buffer, dev->data + offset, nbytes);
 	}
 }
 
 /*
  * The simple form of the request function.
+ * ¼òµ¥ÇëÇóº¯Êı,´¦Àíblk-mq¶ÓÁĞÖĞµÄÇëÇó
  */
-// static void sbull_request(struct request_queue *q)
-static blk_status_t sbull_request(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd) /* For blk-mq */
+//static void sbull_request(struct request_queue *q)
+static blk_status_t sbull_request(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data* bd)   /* For blk-mq */
 {
-	struct request *req = bd->rq;
-	struct sbull_dev *dev = req->rq_disk->private_data;
-	struct bio_vec bvec;
-	struct req_iterator iter;
-	sector_t pos_sector = blk_rq_pos(req);
-	void *buffer;
-	blk_status_t ret;
+	struct request *req = bd->rq;	/* »ñÈ¡ÇëÇó½á¹¹ */
+	struct sbull_dev *dev = req->rq_disk->private_data;	/* »ñÈ¡Éè±¸Ë½ÓĞÊı¾İ */
+        struct bio_vec bvec;		/* bioÏòÁ¿,±íÊ¾Ò»¸öÄÚ´æ¶Î */
+        struct req_iterator iter;	/* ÇëÇóµü´úÆ÷ */
+        sector_t pos_sector = blk_rq_pos(req);	/* ÇëÇóµÄÆğÊ¼ÉÈÇø */
+	void	*buffer;		/* Êı¾İ»º³åÇøÖ¸Õë */
+	blk_status_t  ret;		/* ·µ»Ø×´Ì¬ */
 
-	blk_mq_start_request(req);
+	blk_mq_start_request (req);	/* ¿ªÊ¼´¦ÀíÇëÇó */
 
-	if (blk_rq_is_passthrough(req))
-	{
-		printk(KERN_NOTICE "Skip non-fs request\n");
-		ret = BLK_STS_IOERR; //-EIO
-		goto done;
+	if (blk_rq_is_passthrough(req)) {	/* Ìø¹ı·ÇÎÄ¼şÏµÍ³ÇëÇó */
+		printk (KERN_NOTICE "Skip non-fs request\n");
+                ret = BLK_STS_IOERR;  //-EIO
+			goto done;
 	}
+	/* ±éÀúÇëÇóµÄÃ¿¸ö¶Î */
 	rq_for_each_segment(bvec, req, iter)
 	{
-		size_t num_sector = blk_rq_cur_sectors(req);
-		printk(KERN_NOTICE "Req dev %u dir %d sec %lld, nr %ld\n",
-			   (unsigned)(dev - Devices), rq_data_dir(req),
-			   pos_sector, num_sector);
-		buffer = page_address(bvec.bv_page) + bvec.bv_offset;
-		sbull_transfer(dev, pos_sector, num_sector,
-					   buffer, rq_data_dir(req) == WRITE);
-		pos_sector += num_sector;
+		size_t num_sector = blk_rq_cur_sectors(req);	/* µ±Ç°ÇëÇóµÄÉÈÇøÊı */
+		printk (KERN_NOTICE "Req dev %u dir %d sec %lld, nr %ld\n",
+                        (unsigned)(dev - Devices), rq_data_dir(req),
+                        pos_sector, num_sector);
+		buffer = page_address(bvec.bv_page) + bvec.bv_offset;	/* »ñÈ¡Êı¾İ»º³åÇøµØÖ· */
+		sbull_transfer(dev, pos_sector, num_sector,	/* Ö´ĞĞÊı¾İ´«Êä */
+				buffer, rq_data_dir(req) == WRITE);
+		pos_sector += num_sector;	/* ¸üĞÂÉÈÇøÎ»ÖÃ */
 	}
-	ret = BLK_STS_OK;
+	ret = BLK_STS_OK;	/* ·µ»Ø³É¹¦×´Ì¬ */
 done:
-	blk_mq_end_request(req, ret);
+	blk_mq_end_request (req, ret);	/* ½áÊøÇëÇó´¦Àí */
 	return ret;
 }
 
+
 /*
  * Transfer a single BIO.
+ * ´«Êäµ¥¸öBIOÇëÇó
  */
 static int sbull_xfer_bio(struct sbull_dev *dev, struct bio *bio)
 {
-	struct bio_vec bvec;
-	struct bvec_iter iter;
-	sector_t sector = bio->bi_iter.bi_sector;
+	struct bio_vec bvec;		/* bioÏòÁ¿ */
+	struct bvec_iter iter;		/* bioµü´úÆ÷ */
+	sector_t sector = bio->bi_iter.bi_sector;	/* ÆğÊ¼ÉÈÇø */
 
-	/* Do each segment independently. */
-	bio_for_each_segment(bvec, bio, iter)
-	{
-		// char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
-		char *buffer = kmap_atomic(bvec.bv_page) + bvec.bv_offset;
-		// sbull_transfer(dev, sector, bio_cur_bytes(bio) >> 9,
+	/* Do each segment independently. ¶ÀÁ¢´¦ÀíÃ¿¸ö¶Î */
+	bio_for_each_segment(bvec, bio, iter) {
+		//char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
+		char *buffer = kmap_atomic(bvec.bv_page) + bvec.bv_offset;	/* Ó³ÉäÒ³Ãæ»ñÈ¡»º³åÇø */
+		//sbull_transfer(dev, sector, bio_cur_bytes(bio) >> 9,
 		sbull_transfer(dev, sector, (bio_cur_bytes(bio) / KERNEL_SECTOR_SIZE),
-					   buffer, bio_data_dir(bio) == WRITE);
-		// sector += bio_cur_bytes(bio) >> 9;
-		sector += (bio_cur_bytes(bio) / KERNEL_SECTOR_SIZE);
+				buffer, bio_data_dir(bio) == WRITE);	/* ´«ÊäÊı¾İ */
+		//sector += bio_cur_bytes(bio) >> 9;
+		sector += (bio_cur_bytes(bio) / KERNEL_SECTOR_SIZE);	/* ¸üĞÂÉÈÇøÎ»ÖÃ */
 		//__bio_kunmap_atomic(buffer, KM_USER0);
-		kunmap_atomic(buffer);
+		kunmap_atomic(buffer);	/* ½â³ıÓ³Éä */
 	}
-	return 0; /* Always "succeed" */
+	return 0; /* Always "succeed" ×ÜÊÇ·µ»Ø³É¹¦ */
 }
 
 /*
  * Transfer a full request.
+ * ´«ÊäÍêÕûµÄÇëÇó(¿ÉÄÜ°üº¬¶à¸öBIO)
  */
 static int sbull_xfer_request(struct sbull_dev *dev, struct request *req)
 {
-	struct bio *bio;
-	int nsect = 0;
+	struct bio *bio;	/* bio½á¹¹Ö¸Õë */
+	int nsect = 0;		/* ´«ÊäµÄÉÈÇø×ÜÊı */
 
-	__rq_for_each_bio(bio, req)
-	{
-		sbull_xfer_bio(dev, bio);
-		// nsect += bio->bi_size/KERNEL_SECTOR_SIZE;
-		nsect += bio->bi_iter.bi_size / KERNEL_SECTOR_SIZE;
+	/* ±éÀúÇëÇóÖĞµÄÃ¿¸öBIO */
+	__rq_for_each_bio(bio, req) {
+		sbull_xfer_bio(dev, bio);	/* ´«Êäµ¥¸öBIO */
+		//nsect += bio->bi_size/KERNEL_SECTOR_SIZE;
+		nsect += bio->bi_iter.bi_size/KERNEL_SECTOR_SIZE;	/* ÀÛ¼ÓÉÈÇøÊı */
 	}
-	return nsect;
+	return nsect;	/* ·µ»Ø´«ÊäµÄ×ÜÉÈÇøÊı */
 }
+
+
 
 /*
  * Smarter request function that "handles clustering".
+ * ¸üÖÇÄÜµÄÇëÇóº¯Êı,¿ÉÒÔ´¦Àí¾Û´ØÇëÇó
  */
-// static void sbull_full_request(struct request_queue *q)
-static blk_status_t sbull_full_request(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd)
+//static void sbull_full_request(struct request_queue *q)
+static blk_status_t sbull_full_request(struct blk_mq_hw_ctx * hctx, const struct blk_mq_queue_data * bd)
 {
-	struct request *req = bd->rq;
-	int sectors_xferred;
-	// struct sbull_dev *dev = q->queuedata;
-	struct sbull_dev *dev = req->q->queuedata;
-	blk_status_t ret;
+	struct request *req = bd->rq;	/* »ñÈ¡ÇëÇó½á¹¹ */
+	int sectors_xferred;		/* ÒÑ´«ÊäµÄÉÈÇøÊı */
+	//struct sbull_dev *dev = q->queuedata;
+	struct sbull_dev *dev = req->q->queuedata;	/* »ñÈ¡Éè±¸Êı¾İ */
+	blk_status_t  ret;		/* ·µ»Ø×´Ì¬ */
 
-	blk_mq_start_request(req);
-	// while ((req = blk_fetch_request(q)) != NULL) {
-	// if (req->cmd_type != REQ_TYPE_FS) {
-	if (blk_rq_is_passthrough(req))
-	{
-		printk(KERN_NOTICE "Skip non-fs request\n");
-		//__blk_end_request(req, -EIO, blk_rq_cur_bytes(req));
-		ret = BLK_STS_IOERR; //-EIO;
-		// continue;
-		goto done;
-	}
-	sectors_xferred = sbull_xfer_request(dev, req);
-	ret = BLK_STS_OK;
-done:
-	//__blk_end_request(req, 0, sectors_xferred);
-	blk_mq_end_request(req, ret);
+	blk_mq_start_request (req);	/* ¿ªÊ¼´¦ÀíÇëÇó */
+	//while ((req = blk_fetch_request(q)) != NULL) {
+		//if (req->cmd_type != REQ_TYPE_FS) {
+		if (blk_rq_is_passthrough(req)) {	/* Ìø¹ı·ÇÎÄ¼şÏµÍ³ÇëÇó */
+			printk (KERN_NOTICE "Skip non-fs request\n");
+			//__blk_end_request(req, -EIO, blk_rq_cur_bytes(req));
+			ret = BLK_STS_IOERR; //-EIO;
+			//continue;
+			goto done;
+		}
+		sectors_xferred = sbull_xfer_request(dev, req);	/* ´«ÊäÇëÇó */
+		ret = BLK_STS_OK;	/* ·µ»Ø³É¹¦×´Ì¬ */
+	done:
+		//__blk_end_request(req, 0, sectors_xferred);
+		blk_mq_end_request (req, ret);	/* ½áÊøÇëÇó´¦Àí */
 	//}
 	return ret;
 }
 
+
+
 /*
  * The direct make request version.
+ * Ö±½ÓÊ¹ÓÃmake_requestµÄ°æ±¾
  */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
-// static void sbull_make_request(struct request_queue *q, struct bio *bio)
+//static void sbull_make_request(struct request_queue *q, struct bio *bio)
 static blk_qc_t sbull_make_request(struct request_queue *q, struct bio *bio)
 #else
 static blk_qc_t sbull_make_request(struct bio *bio)
 #endif
 {
-	// struct sbull_dev *dev = q->queuedata;
-	struct sbull_dev *dev = bio->bi_disk->private_data;
+	//struct sbull_dev *dev = q->queuedata;
+	struct sbull_dev *dev = bio->bi_disk->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
 	int status;
 
-	status = sbull_xfer_bio(dev, bio);
-	bio->bi_status = status;
-	bio_endio(bio);
-	return BLK_QC_T_NONE;
+	status = sbull_xfer_bio(dev, bio);	/* ´«ÊäBIO */
+	bio->bi_status = status;		/* ÉèÖÃBIO×´Ì¬ */
+	bio_endio(bio);			/* ½áÊøBIO´¦Àí */
+	return BLK_QC_T_NONE;		/* ·µ»Ø¶ÓÁĞÍê³É±ê¼Ç */
 }
+
 
 /*
  * Open and close.
+ * Éè±¸´ò¿ªºÍ¹Ø±Õº¯Êı
  */
 
 static int sbull_open(struct block_device *bdev, fmode_t mode)
 {
-	struct sbull_dev *dev = bdev->bd_disk->private_data;
+	struct sbull_dev *dev = bdev->bd_disk->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
 
-	del_timer_sync(&dev->timer);
-	// filp->private_data = dev;
-	spin_lock(&dev->lock);
-	if (!dev->users)
+	del_timer_sync(&dev->timer);	/* É¾³ı¶¨Ê±Æ÷ */
+	//filp->private_data = dev;
+	spin_lock(&dev->lock);		/* ¼ÓËø */
+	if (! dev->users) 
 	{
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-		check_disk_change(bdev);
+		check_disk_change(bdev);	/* ¼ì²é´ÅÅÌÊÇ·ñ¸ü»» */
 #else
-		/* For newer kernels (as of 5.10), bdev_check_media_change()
-		 * is used, in favor of check_disk_change(),
-		 * with the modification that invalidation
-		 * is no longer forced. */
+                /* For newer kernels (as of 5.10), bdev_check_media_change()
+                 * is used, in favor of check_disk_change(),
+                 * with the modification that invalidation
+                 * is no longer forced. 5.10¼°ÒÔÉÏÊ¹ÓÃĞÂµÄ½Ó¿Ú */
 
-		if (bdev_check_media_change(bdev))
-		{
-			struct gendisk *gd = bdev->bd_disk;
-			const struct block_device_operations *bdo = gd->fops;
-			if (bdo && bdo->revalidate_disk)
-				bdo->revalidate_disk(gd);
-		}
+                if(bdev_check_media_change(bdev))	/* ¼ì²é½éÖÊÊÇ·ñ¸ü»» */
+                {
+                        struct gendisk *gd = bdev->bd_disk;
+                        const struct block_device_operations *bdo = gd->fops;
+                        if (bdo && bdo->revalidate_disk)
+                                bdo->revalidate_disk(gd);	/* ÖØĞÂÑéÖ¤´ÅÅÌ */
+                }
 #endif
 	}
-	dev->users++;
-	spin_unlock(&dev->lock);
+	dev->users++;	/* Ôö¼ÓÓÃ»§¼ÆÊı */
+	spin_unlock(&dev->lock);	/* ½âËø */
 	return 0;
 }
 
 static void sbull_release(struct gendisk *disk, fmode_t mode)
 {
-	struct sbull_dev *dev = disk->private_data; /* è·å–è®¾å¤‡æ•°æ® */
+	struct sbull_dev *dev = disk->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
 
-	spin_lock(&dev->lock); /* åŠ é” */
-	dev->users--;		   /* å‡å°‘ç”¨æˆ·è®¡æ•° */
-	if (dev->users == 0)
-	{ /* å¦‚æœæ²¡æœ‰ç”¨æˆ·äº†,é‡å¯å®šæ—¶å™¨ */
+	spin_lock(&dev->lock);		/* ¼ÓËø */
+	dev->users--;			/* ¼õÉÙÓÃ»§¼ÆÊı */
+	if (dev->users == 0) {		/* Èç¹ûÃ»ÓĞÓÃ»§ÁË,ÖØÆô¶¨Ê±Æ÷ */
 		dev->timer.expires = jiffies + INVALIDATE_DELAY;
 		add_timer(&dev->timer);
 	}
-	spin_unlock(&dev->lock); /* è§£é” */
+	spin_unlock(&dev->lock);	/* ½âËø */
 }
+
 /*
  * Look for a (simulated) media change.
+ * ¼ì²éÊÇ·ñÓĞ(Ä£ÄâµÄ)½éÖÊ¸ü»»
  */
 int sbull_media_changed(struct gendisk *gd)
 {
-	struct sbull_dev *dev = gd->private_data;
+	struct sbull_dev *dev = gd->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
 
-	return dev->media_change;
+	return dev->media_change;	/* ·µ»Ø½éÖÊ¸ü»»±êÖ¾ */
 }
 
 /*
  * Revalidate.  WE DO NOT TAKE THE LOCK HERE, for fear of deadlocking
  * with open.  That needs to be reevaluated.
+ * ÖØĞÂÑéÖ¤´ÅÅÌ¡£ÕâÀï²»¼ÓËø,±ÜÃâÓëopenËÀËø
  */
 int sbull_revalidate(struct gendisk *gd)
 {
-	struct sbull_dev *dev = gd->private_data;
+	struct sbull_dev *dev = gd->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
 
-	if (dev->media_change)
-	{
-		dev->media_change = 0;
-		memset(dev->data, 0, dev->size);
+	if (dev->media_change) {	/* Èç¹û½éÖÊÒÑ¸ü»» */
+		dev->media_change = 0;	/* Çå³ı±êÖ¾ */
+		memset (dev->data, 0, dev->size);	/* Çå¿ÕÉè±¸Êı¾İ */
 	}
 	return 0;
 }
@@ -348,195 +366,208 @@ int sbull_revalidate(struct gendisk *gd)
 /*
  * The "invalidate" function runs out of the device timer; it sets
  * a flag to simulate the removal of the media.
+ * Ê§Ğ§º¯ÊıÓÉÉè±¸¶¨Ê±Æ÷µ÷ÓÃ,ÉèÖÃ±êÖ¾ÒÔÄ£Äâ½éÖÊÒÆ³ı
  */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)) && !defined(timer_setup)
-void sbull_invalidate(unsigned long ldev)
+void sbull_invalidate(unsigned long ldev)	/* 4.15ÒÔÏÂ°æ±¾µÄ¶¨Ê±Æ÷»Øµ÷ */
 {
-	struct sbull_dev *dev = (struct sbull_dev *)ldev;
+        struct sbull_dev *dev = (struct sbull_dev *) ldev;
 #else
-void sbull_invalidate(struct timer_list *ldev)
+void sbull_invalidate(struct timer_list * ldev)	/* 4.15¼°ÒÔÉÏ°æ±¾µÄ¶¨Ê±Æ÷»Øµ÷ */
 {
-	struct sbull_dev *dev = from_timer(dev, ldev, timer);
+        struct sbull_dev *dev = from_timer(dev, ldev, timer);
 #endif
 
-	spin_lock(&dev->lock);
-	if (dev->users || !dev->data)
-		printk(KERN_WARNING "sbull: timer sanity check failed\n");
+	spin_lock(&dev->lock);	/* ¼ÓËø */
+	if (dev->users || !dev->data)	/* ¼ì²éÊÇ·ñÓĞÓÃ»§»òÊı¾İ */
+		printk (KERN_WARNING "sbull: timer sanity check failed\n");
 	else
-		dev->media_change = 1;
-	spin_unlock(&dev->lock);
+		dev->media_change = 1;	/* ÉèÖÃ½éÖÊ¸ü»»±êÖ¾ */
+	spin_unlock(&dev->lock);	/* ½âËø */
 }
 
 /*
  * The ioctl() implementation
+ * ioctlÏµÍ³µ÷ÓÃÊµÏÖ
  */
 
-int sbull_ioctl(struct block_device *bdev, fmode_t mode,
-				unsigned int cmd, unsigned long arg)
+int sbull_ioctl (struct block_device *bdev, fmode_t mode,
+                 unsigned int cmd, unsigned long arg)
 {
 	long size;
-	struct hd_geometry geo;
-	struct sbull_dev *dev = bdev->bd_disk->private_data;
-
-	switch (cmd)
-	{
-	case HDIO_GETGEO:
-		/*
+	struct hd_geometry geo;		/* Ó²ÅÌ¼¸ºÎ²ÎÊı */
+	struct sbull_dev *dev = bdev->bd_disk->private_data;	/* »ñÈ¡Éè±¸Êı¾İ */
+	switch(cmd) {
+	    case HDIO_GETGEO:	/* »ñÈ¡Ó²ÅÌ¼¸ºÎ²ÎÊı */
+        	/*
 		 * Get geometry: since we are a virtual device, we have to make
 		 * up something plausible.  So we claim 16 sectors, four heads,
 		 * and calculate the corresponding number of cylinders.  We set the
 		 * start of data at sector four.
+		 * »ñÈ¡¼¸ºÎ²ÎÊı:ÒòÎªÎÒÃÇÊÇĞéÄâÉè±¸,ĞèÒª±àÔìÒ»¸öºÏÀíµÄÖµ
 		 */
-		size = dev->size * (hardsect_size / KERNEL_SECTOR_SIZE);
-		geo.cylinders = (size & ~0x3f) >> 6;
-		geo.heads = 4;
-		geo.sectors = 16;
-		geo.start = 4;
-		if (copy_to_user((void __user *)arg, &geo, sizeof(geo)))
+		size = dev->size*(hardsect_size/KERNEL_SECTOR_SIZE);
+		geo.cylinders = (size & ~0x3f) >> 6;	/* ÖùÃæÊı */
+		geo.heads = 4;		/* ´ÅÍ·Êı */
+		geo.sectors = 16;	/* Ã¿´ÅµÀÉÈÇøÊı */
+		geo.start = 4;		/* Êı¾İÆğÊ¼ÉÈÇø */
+		if (copy_to_user((void __user *) arg, &geo, sizeof(geo)))
 			return -EFAULT;
 		return 0;
 	}
 
-	return -ENOTTY; /* unknown command */
+	return -ENOTTY; /* unknown command Î´ÖªÃüÁî */
 }
+
+
 
 /*
  * The device operations structure.
+ * ¿éÉè±¸²Ù×÷½á¹¹
  */
 static struct block_device_operations sbull_ops = {
-	.owner = THIS_MODULE,
-	.open = sbull_open,
-	.release = sbull_release,
+	.owner           = THIS_MODULE,	/* Ä£¿éËùÓĞÕß */
+	.open 	         = sbull_open,		/* ´ò¿ªº¯Êı */
+	.release 	 = sbull_release,	/* ÊÍ·Åº¯Êı */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
-	.media_changed = sbull_media_changed, // DEPRECATED in v5.9
+	.media_changed   = sbull_media_changed,  // DEPRECATED in v5.9 ½éÖÊ±ä»¯¼ì²â
 #else
-	.submit_bio = sbull_make_request,
+	.submit_bio      = sbull_make_request,	/* Ìá½»BIO */
 #endif
-	.revalidate_disk = sbull_revalidate,
-	.ioctl = sbull_ioctl};
+	.revalidate_disk = sbull_revalidate,	/* ÖØĞÂÑéÖ¤´ÅÅÌ */
+	.ioctl	         = sbull_ioctl		/* ioctl¿ØÖÆ */
+};
 
 static struct blk_mq_ops mq_ops_simple = {
-	.queue_rq = sbull_request,
+    .queue_rq = sbull_request,	/* ¼òµ¥Ä£Ê½ÇëÇó´¦Àíº¯Êı */
 };
 
 static struct blk_mq_ops mq_ops_full = {
-	.queue_rq = sbull_full_request,
+    .queue_rq = sbull_full_request,	/* ÍêÕûÄ£Ê½ÇëÇó´¦Àíº¯Êı */
 };
+
 
 /*
  * Set up our internal device.
+ * ÉèÖÃÄÚ²¿Éè±¸
  */
 static void setup_device(struct sbull_dev *dev, int which)
 {
 	/*
 	 * Get some memory.
+	 * ·ÖÅäÄÚ´æ²¢³õÊ¼»¯Éè±¸
 	 */
-	memset(dev, 0, sizeof(struct sbull_dev));
-	dev->size = nsectors * hardsect_size;
-	dev->data = vmalloc(dev->size);
-	if (dev->data == NULL)
-	{
-		printk(KERN_NOTICE "vmalloc failure.\n");
+	memset (dev, 0, sizeof (struct sbull_dev));
+	dev->size = nsectors*hardsect_size;	/* ¼ÆËãÉè±¸´óĞ¡ */
+	dev->data = vmalloc(dev->size);		/* ·ÖÅäĞéÄâÄÚ´æ */
+	if (dev->data == NULL) {
+		printk (KERN_NOTICE "vmalloc failure.\n");
 		return;
 	}
-	spin_lock_init(&dev->lock);
+	spin_lock_init(&dev->lock);	/* ³õÊ¼»¯×ÔĞıËø */
 
 	/*
 	 * The timer which "invalidates" the device.
+	 * ³õÊ¼»¯¶¨Ê±Æ÷,ÓÃÓÚÄ£Äâ½éÖÊ¸ü»»
 	 */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)) && !defined(timer_setup)
 	init_timer(&dev->timer);
-	dev->timer.data = (unsigned long)dev;
+	dev->timer.data = (unsigned long) dev;
 	dev->timer.function = sbull_invalidate;
 #else
-	timer_setup(&dev->timer, sbull_invalidate, 0);
+        timer_setup(&dev->timer, sbull_invalidate, 0);
 #endif
+
+
 
 	/*
 	 * The I/O queue, depending on whether we are using our own
 	 * make_request function or not.
+	 * ¸ù¾İÇëÇóÄ£Ê½ÉèÖÃI/O¶ÓÁĞ
 	 */
-	switch (request_mode)
-	{
-	case RM_NOQUEUE:
+	switch (request_mode) {
+	    case RM_NOQUEUE:	/* ÎŞ¶ÓÁĞÄ£Ê½ */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))
-		dev->queue = blk_generic_alloc_queue(sbull_make_request, NUMA_NO_NODE);
+		dev->queue =  blk_generic_alloc_queue(sbull_make_request, NUMA_NO_NODE);
 #else
-		dev->queue = blk_generic_alloc_queue(NUMA_NO_NODE);
+		dev->queue =  blk_generic_alloc_queue(NUMA_NO_NODE);
 #endif
 		if (dev->queue == NULL)
 			goto out_vfree;
 		break;
 
-	case RM_FULL:
-		// dev->queue = blk_init_queue(sbull_full_request, &dev->lock);
+	    case RM_FULL:	/* ÍêÕûÄ£Ê½ */
+		//dev->queue = blk_init_queue(sbull_full_request, &dev->lock);
 		dev->queue = blk_mq_init_sq_queue(&dev->tag_set, &mq_ops_full, 128, BLK_MQ_F_SHOULD_MERGE);
 		if (dev->queue == NULL)
 			goto out_vfree;
 		break;
 
-	default:
+	    default:
 		printk(KERN_NOTICE "Bad request mode %d, using simple\n", request_mode);
-		/* fall into.. */
+        	/* fall into.. */
 
-	case RM_SIMPLE:
-		// dev->queue = blk_init_queue(sbull_request, &dev->lock);
+	    case RM_SIMPLE:	/* ¼òµ¥Ä£Ê½ */
+		//dev->queue = blk_init_queue(sbull_request, &dev->lock);
 		dev->queue = blk_mq_init_sq_queue(&dev->tag_set, &mq_ops_simple, 128, BLK_MQ_F_SHOULD_MERGE);
 		if (dev->queue == NULL)
 			goto out_vfree;
 		break;
 	}
-	blk_queue_logical_block_size(dev->queue, hardsect_size);
-	dev->queue->queuedata = dev;
+	blk_queue_logical_block_size(dev->queue, hardsect_size);	/* ÉèÖÃÂß¼­¿é´óĞ¡ */
+	dev->queue->queuedata = dev;	/* ÉèÖÃ¶ÓÁĞË½ÓĞÊı¾İ */
 	/*
 	 * And the gendisk structure.
+	 * ·ÖÅä²¢³õÊ¼»¯gendisk½á¹¹
 	 */
 	dev->gd = alloc_disk(SBULL_MINORS);
-	if (!dev->gd)
-	{
-		printk(KERN_NOTICE "alloc_disk failure\n");
+	if (! dev->gd) {
+		printk (KERN_NOTICE "alloc_disk failure\n");
 		goto out_vfree;
 	}
-	dev->gd->major = sbull_major;
-	dev->gd->first_minor = which * SBULL_MINORS;
-	dev->gd->fops = &sbull_ops;
-	dev->gd->queue = dev->queue;
-	dev->gd->private_data = dev;
-	snprintf(dev->gd->disk_name, 32, "sbull%c", which + 'a');
-	set_capacity(dev->gd, nsectors * (hardsect_size / KERNEL_SECTOR_SIZE));
-	add_disk(dev->gd);
+	dev->gd->major = sbull_major;		/* Ö÷Éè±¸ºÅ */
+	dev->gd->first_minor = which*SBULL_MINORS;	/* ÆğÊ¼´ÎÉè±¸ºÅ */
+	dev->gd->fops = &sbull_ops;		/* ²Ù×÷º¯Êı */
+	dev->gd->queue = dev->queue;		/* ÇëÇó¶ÓÁĞ */
+	dev->gd->private_data = dev;		/* Ë½ÓĞÊı¾İ */
+	snprintf (dev->gd->disk_name, 32, "sbull%c", which + 'a');	/* Éè±¸Ãû³Æ */
+	set_capacity(dev->gd, nsectors*(hardsect_size/KERNEL_SECTOR_SIZE));	/* ÉèÖÃÈİÁ¿ */
+	add_disk(dev->gd);	/* Ìí¼Óµ½ÏµÍ³ */
 	return;
 
-out_vfree:
+  out_vfree:
 	if (dev->data)
-		vfree(dev->data);
+		vfree(dev->data);	/* ÊÍ·ÅÄÚ´æ */
 }
+
+
 
 static int __init sbull_init(void)
 {
 	int i;
 	/*
 	 * Get registered.
+	 * ×¢²á¿éÉè±¸Çı¶¯
 	 */
-	sbull_major = register_blkdev(sbull_major, "sbull");
-	if (sbull_major <= 0)
-	{
+	sbull_major = register_blkdev(sbull_major, "sbull");	/* ×¢²áÖ÷Éè±¸ºÅ */
+	if (sbull_major <= 0) {
 		printk(KERN_WARNING "sbull: unable to get major number\n");
 		return -EBUSY;
 	}
 	/*
 	 * Allocate the device array, and initialize each one.
+	 * ·ÖÅäÉè±¸Êı×é²¢³õÊ¼»¯Ã¿¸öÉè±¸
 	 */
-	Devices = kmalloc(ndevices * sizeof(struct sbull_dev), GFP_KERNEL);
+	Devices = kmalloc(ndevices*sizeof (struct sbull_dev), GFP_KERNEL);	/* ·ÖÅäÉè±¸Êı×é */
 	if (Devices == NULL)
 		goto out_unregister;
 	for (i = 0; i < ndevices; i++)
-		setup_device(Devices + i, i);
+		setup_device(Devices + i, i);	/* ³õÊ¼»¯Ã¿¸öÉè±¸ */
 
 	return 0;
 
-out_unregister:
-	unregister_blkdev(sbull_major, "sbd");
+  out_unregister:
+	unregister_blkdev(sbull_major, "sbd");	/* ×¢Ïú¿éÉè±¸ */
 	return -ENOMEM;
 }
 
@@ -544,31 +575,28 @@ static void sbull_exit(void)
 {
 	int i;
 
-	for (i = 0; i < ndevices; i++)
-	{
+	/* ÇåÀíÃ¿¸öÉè±¸ */
+	for (i = 0; i < ndevices; i++) {
 		struct sbull_dev *dev = Devices + i;
 
-		del_timer_sync(&dev->timer);
-		if (dev->gd)
-		{
-			del_gendisk(dev->gd);
-			put_disk(dev->gd);
+		del_timer_sync(&dev->timer);	/* É¾³ı¶¨Ê±Æ÷ */
+		if (dev->gd) {
+			del_gendisk(dev->gd);	/* É¾³ıgendisk */
+			put_disk(dev->gd);	/* ÊÍ·Ågendisk */
 		}
-		if (dev->queue)
-		{
+		if (dev->queue) {
 			if (request_mode == RM_NOQUEUE)
-				// kobject_put (&dev->queue->kobj);
-				blk_put_queue(dev->queue);
+				//kobject_put (&dev->queue->kobj);
+				blk_put_queue(dev->queue);	/* ÊÍ·Å¶ÓÁĞ */
 			else
-				blk_cleanup_queue(dev->queue);
+				blk_cleanup_queue(dev->queue);	/* ÇåÀí¶ÓÁĞ */
 		}
 		if (dev->data)
-			vfree(dev->data);
+			vfree(dev->data);	/* ÊÍ·ÅÊı¾İÄÚ´æ */
 	}
-	unregister_blkdev(sbull_major, "sbull");
-	kfree(Devices);
+	unregister_blkdev(sbull_major, "sbull");	/* ×¢Ïú¿éÉè±¸ */
+	kfree(Devices);	/* ÊÍ·ÅÉè±¸Êı×é */
 }
 
-module_init(sbull_init);
-module_exit(sbull_exit);
-//lxå¤§ç‹é©¾åˆ°
+module_init(sbull_init);	/* Ä£¿é³õÊ¼»¯Èë¿Ú */
+module_exit(sbull_exit);	/* Ä£¿éÍË³öÈë¿Ú */
